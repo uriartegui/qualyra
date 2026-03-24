@@ -49,7 +49,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
             String userIdStr = jwtService.extractUserId(jwt);
             UUID userId = UUID.fromString(userIdStr);
-            User user = userService.findById(userId);
+            User user = userService.findEntityById(userId);
 
             if (!user.isActive()) {
                 filterChain.doFilter(request, response);

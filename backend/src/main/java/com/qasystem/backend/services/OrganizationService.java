@@ -1,64 +1,83 @@
 package com.qasystem.backend.services;
 
+import com.qasystem.backend.dtos.OrganizationDTO;
 import com.qasystem.backend.dtos.OrganizationUpdateDTO;
 import com.qasystem.backend.entities.*;
 import com.qasystem.backend.repositories.OrganizationRepository;
+import com.qasystem.backend.repositories.UserRepository;
 import com.qasystem.backend.repositories.exceptions.ForbiddenException;
+import com.qasystem.backend.repositories.exceptions.ResourceNotFoundException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-
-import java.util.List;
 import java.util.UUID;
+
 
 @Service
 public class OrganizationService {
 
     private final OrganizationRepository repository;
+    private final UserRepository userRepository;
 
-    public OrganizationService(OrganizationRepository repository) {
+    public OrganizationService(OrganizationRepository repository, UserRepository userRepository) {
         this.repository = repository;
+        this.userRepository = userRepository;
     }
 
     @Transactional
-    public Organization create(String name, OrganizationType type, OrganizationPlan plan) {
-        Organization org = new Organization(name, type, plan);
-        return repository.save(org);
+    public OrganizationDTO create(String name, OrganizationType type, OrganizationPlan plan) {
+        Organization entity = new Organization(name, type, plan);
+        entity = repository.save(entity);
+        return new OrganizationDTO(entity);
     }
 
     @Transactional(readOnly = true)
-    public List<Organization> findAll() {
-        return repository.findAll();
+    public Page<OrganizationDTO> findAll(Pageable pageable) {
+        Page<Organization> result = repository.findAll(pageable);
+        return result.map(OrganizationDTO::new);
     }
 
     @Transactional(readOnly = true)
-    public Organization findById(UUID id) {
-        return repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Org não encontrada: " + id));
+    public OrganizationDTO findById(UUID id) {
+        Organization entity = repository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Organização não encontrada: " + id));
+        return new OrganizationDTO(entity);
+    }
+
+    @Transactional(readOnly = true)
+    public OrganizationDTO getByUser(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+        return new OrganizationDTO(user.getOrganization());
     }
 
     @Transactional
-    public Organization update(UUID id, String name) {
-        Organization org = findById(id);
-        org.setName(name);
-        return repository.save(org);
+    public OrganizationDTO update(UUID id, String name) {
+        Organization entity = repository.getReferenceById(id);
+        entity.setName(name);
+        entity = repository.save(entity);
+        return new OrganizationDTO(entity);
     }
 
     @Transactional
-    public Organization updateForOwner(UUID orgId, OrganizationUpdateDTO dto, User requester) {
-
+    public OrganizationDTO updateForOwner(UUID userId, OrganizationUpdateDTO dto, User requester) {
         if (requester.getRole() != Role.OWNER) {
             throw new ForbiddenException("Somente OWNER pode editar organização");
         }
-
-        Organization org = repository.findById(orgId)
-                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada"));
-
-        org.setName(dto.getName());
-        org.setDescription(dto.getDescription());
-        org.setLogoUrl(dto.getLogoUrl());
-
-        return repository.save(org);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+        Organization entity = repository.findById(user.getOrganization().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Organização não encontrada"));
+        copyDtoToEntity(dto, entity);
+        entity = repository.save(entity);
+        return new OrganizationDTO(entity);
     }
 
+    private void copyDtoToEntity(OrganizationUpdateDTO dto, Organization entity) {
+        entity.setName(dto.getName());
+        entity.setDescription(dto.getDescription());
+        entity.setLogoUrl(dto.getLogoUrl());
+    }
 }

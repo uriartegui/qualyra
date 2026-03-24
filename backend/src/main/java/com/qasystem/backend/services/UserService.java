@@ -1,10 +1,15 @@
 package com.qasystem.backend.services;
 
+import com.qasystem.backend.dtos.CreateUserDTO;
 import com.qasystem.backend.dtos.UpdateUserDTO;
+import com.qasystem.backend.dtos.UserDTO;
 import com.qasystem.backend.entities.*;
 import com.qasystem.backend.repositories.OrganizationRepository;
 import com.qasystem.backend.repositories.UserRepository;
+import com.qasystem.backend.repositories.exceptions.ResourceNotFoundException;
 import jakarta.annotation.PostConstruct;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -20,7 +25,6 @@ public class UserService {
     private final OrganizationRepository organizationRepository;
     private final PasswordEncoder passwordEncoder;
 
-
     public UserService(UserRepository userRepository,
                        OrganizationRepository organizationRepository,
                        PasswordEncoder passwordEncoder) {
@@ -32,13 +36,11 @@ public class UserService {
     @PostConstruct
     public void initAdmin() {
         if (userRepository.count() == 0) {
-            System.out.println("Criando admin...");
             Organization org = new Organization();
             org.setName("Qualyra SA");
             org.setType(OrganizationType.BUSINESS);
             org.setPlan(OrganizationPlan.FREE);
             org = organizationRepository.save(org);
-            System.out.println("Org ID: " + org.getId());
 
             User admin = new User();
             admin.setName("Admin Qualyra");
@@ -47,79 +49,104 @@ public class UserService {
             admin.setRole(Role.ADMIN);
             admin.setOrganization(org);
             admin.setActive(true);
-            admin = userRepository.save(admin);
-            System.out.println("Admin criado! ID: " + admin.getId());
-
+            userRepository.save(admin);
+            System.out.println("Admin criado!");
         }
     }
 
-    public User findByIdForOrg(UUID id, UUID orgId) {
-        return userRepository.findByIdAndOrganization_Id(id, orgId)
-                .orElseThrow(() -> new RuntimeException("User não encontrado"));
+    @Transactional(readOnly = true)
+    public UserDTO findByIdForOrg(UUID id, UUID orgId) {
+        User entity = userRepository.findByIdAndOrganization_Id(id, orgId)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+        return new UserDTO(entity);
     }
 
-    public List<User> findAllByOrganization(UUID orgId) {
-        return userRepository.findByOrganization_Id(orgId);
+    @Transactional(readOnly = true)
+    public Page<UserDTO> findAllByOrganization(UUID orgId, Pageable pageable) {
+        return userRepository.findByOrganization_Id(orgId, pageable)
+                .map(UserDTO::new);
     }
 
-    public User findById(UUID id) {
+    @Transactional(readOnly = true)
+    public User findEntityById(UUID id) {
         return userRepository.findById(id)
-                .orElseThrow(() -> new UsernameNotFoundException("User ID " + id + " not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
     }
 
+    @Transactional(readOnly = true)
+    public UserDTO findById(UUID id) {
+        User entity = userRepository.findById(id)
+                .orElseThrow(() -> new UsernameNotFoundException("User ID " + id + " not found"));
+        return new UserDTO(entity);
+    }
+
+    @Transactional(readOnly = true)
     public User findByEmail(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found"));
     }
 
     @Transactional
-    public User createUser(UUID organizationId, String name, String email,
-                           String rawPassword, Role role, User requester) {
-
-        if (requester.getRole() == Role.ADMIN && role != Role.MEMBER) {
-            throw new IllegalArgumentException("ADMIN só pode criar MEMBER");
-        }
+    public UserDTO create(CreateUserDTO dto, User requester) {
         if (requester.getRole() == Role.MEMBER) {
             throw new IllegalArgumentException("MEMBER não pode criar usuários");
         }
-        if (userRepository.existsByEmail(email)) {
+        if (requester.getRole() == Role.ADMIN && dto.getRole() != Role.MEMBER) {
+            throw new IllegalArgumentException("ADMIN só pode criar MEMBER");
+        }
+        if (userRepository.existsByEmail(dto.getEmail())) {
             throw new IllegalArgumentException("Email já está em uso");
         }
 
-        Organization org = organizationRepository.findById(organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("Org não encontrada"));
+        Organization org = organizationRepository.findById(requester.getOrganization().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Organização não encontrada"));
 
-        String passwordHash = passwordEncoder.encode(rawPassword);
+        User entity = new User();
+        entity.setActive(true);
+        entity.setOrganization(org);
+        copyDtoToEntity(dto, entity);
 
-        User user = new User(name, email, passwordHash, role, org);
-        user.setActive(true);
-        return userRepository.save(user);
+        entity = userRepository.save(entity);
+        return new UserDTO(entity);
     }
 
     @Transactional
-    public User update(UUID id, UpdateUserDTO dto, User requester) {
-        User user = findByIdForOrg(id, requester.getOrganization().getId());
+    public UserDTO update(UUID id, UpdateUserDTO dto, User requester) {
+        User entity = userRepository.findByIdAndOrganization_Id(id, requester.getOrganization().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+
         if (requester.getRole() != Role.OWNER && dto.getRole() != Role.MEMBER) {
-            throw new IllegalArgumentException("Só OWNER altera ADMIN");
+            throw new IllegalArgumentException("Só OWNER pode alterar para ADMIN");
         }
-        user.setName(dto.getName());
-        user.setRole(dto.getRole());
-        return userRepository.save(user);
+
+        entity.setName(dto.getName());
+        entity.setRole(dto.getRole());
+        entity = userRepository.save(entity);
+        return new UserDTO(entity);
     }
 
     @Transactional
-    public User toggleActive(UUID id, User requester) {
-        User user = findByIdForOrg(id, requester.getOrganization().getId());
-        user.setActive(!user.isActive());
-        return userRepository.save(user);
+    public UserDTO toggleActive(UUID id, User requester) {
+        User entity = userRepository.findByIdAndOrganization_Id(id, requester.getOrganization().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+        entity.setActive(!entity.isActive());
+        entity = userRepository.save(entity);
+        return new UserDTO(entity);
     }
 
     @Transactional
     public void softDelete(UUID id, User requester) {
-        User user = findByIdForOrg(id, requester.getOrganization().getId());
-        user.setActive(false);  // soft delete
-        userRepository.save(user);
+        User entity = userRepository.findByIdAndOrganization_Id(id, requester.getOrganization().getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado"));
+        entity.setActive(false);
+        userRepository.save(entity);
     }
 
+    private void copyDtoToEntity(CreateUserDTO dto, User entity) {
+        entity.setName(dto.getName());
+        entity.setEmail(dto.getEmail());
+        entity.setPassword(passwordEncoder.encode(dto.getPassword()));
+        entity.setRole(dto.getRole());
+    }
 }
 

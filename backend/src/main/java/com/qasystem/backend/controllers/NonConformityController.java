@@ -15,8 +15,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import java.net.URI;
 import java.util.UUID;
+
 
 @RestController
 @RequestMapping("/non-conformities")
@@ -30,17 +33,10 @@ public class NonConformityController {
             @AuthenticationPrincipal User currentUser,
             @Valid @RequestBody NonConformityInsertDTO dto
     ) {
-        NonConformity nc = service.create(
-                currentUser.getOrganization().getId(),
-                dto.getTitle(),
-                dto.getDescription(),
-                dto.getCategory(),
-                dto.getSeverity(),
-                dto.getDueDate(),
-                currentUser,
-                null
-        );
-        return ResponseEntity.status(HttpStatus.CREATED).body(new NonConformityDTO(nc));
+        NonConformityDTO result = service.create(dto, currentUser);
+        URI uri = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}")
+                .buildAndExpand(result.getId()).toUri();
+        return ResponseEntity.created(uri).body(result);
     }
 
     @GetMapping
@@ -48,8 +44,7 @@ public class NonConformityController {
             @AuthenticationPrincipal User currentUser,
             @PageableDefault(size = 20, sort = "createdAt") Pageable pageable
     ) {
-        Page<NonConformity> page = service.findAllByCurrentUserOrg(currentUser, pageable);
-        Page<NonConformityDTO> result = page.map(NonConformityDTO::new);
+        Page<NonConformityDTO> result = service.findAllByCurrentUserOrg(currentUser, pageable);
         return ResponseEntity.ok(result);
     }
 
@@ -58,8 +53,8 @@ public class NonConformityController {
             @AuthenticationPrincipal User currentUser,
             @PathVariable UUID id
     ) {
-        NonConformity nc = service.findByIdForCurrentUser(id, currentUser);
-        return ResponseEntity.ok(new NonConformityDTO(nc));
+        NonConformityDTO dto = service.findByIdForCurrentUser(id, currentUser);
+        return ResponseEntity.ok(dto);
     }
 
     @PutMapping("/{id}")
@@ -68,8 +63,8 @@ public class NonConformityController {
             @PathVariable UUID id,
             @Valid @RequestBody NonConformityUpdateDTO dto
     ) {
-        NonConformity nc = service.update(id, dto, currentUser);
-        return ResponseEntity.ok(new NonConformityDTO(nc));
+        NonConformityDTO result = service.update(id, dto, currentUser);
+        return ResponseEntity.ok(result);
     }
 
     @DeleteMapping("/{id}")
